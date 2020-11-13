@@ -49,3 +49,6 @@ class DummyDataset(tfds.core.GeneratorBasedBuilder):
       value = f.read()
     for i in range(int(value)):
       yield i, {'x': i}
+
+
+raise ValueError
