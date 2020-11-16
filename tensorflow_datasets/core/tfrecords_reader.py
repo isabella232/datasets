@@ -25,11 +25,17 @@ import attr
 
 import numpy as np
 import tensorflow.compat.v2 as tf
+from tensorflow_datasets.core import constants
 from tensorflow_datasets.core import example_parser
 from tensorflow_datasets.core import naming
 from tensorflow_datasets.core import utils
 from tensorflow_datasets.core.utils import read_config as read_config_lib
 from tensorflow_datasets.core.utils import shard_utils
+
+try:
+  from riegeli.tensorflow.ops import riegeli_dataset_ops as riegeli_tf  # pylint: disable=g-import-not-at-top
+except ImportError:
+  riegeli_tf = Any
 
 SplitInfo = Any
 
@@ -55,7 +61,8 @@ $
 _ADDITION_SEP_RE = re.compile(r'\s*\+\s*')
 
 
-def _get_dataset_from_filename(filename_skip_take, do_skip, do_take):
+def _get_dataset_from_filename(filename_skip_take, do_skip, do_take,
+                               file_format):
   """Returns a tf.data.Dataset instance from given (filename, skip, take)."""
   filename, skip, take = (filename_skip_take['filename'],
                           filename_skip_take['skip'],
@@ -64,7 +71,15 @@ def _get_dataset_from_filename(filename_skip_take, do_skip, do_take):
   # Explictly use DatasetV1 for backward compatibility:
   # * isinstance(ds, tf.data.Dataset)
   # * ds.make_one_shot_iterator()
-  ds = tf.data.TFRecordDataset(filename, buffer_size=_BUFFER_SIZE)
+  if file_format == constants.FileFormat.TFRECORD:
+    ds = tf.data.TFRecordDataset(filename, buffer_size=_BUFFER_SIZE)
+  elif file_format == constants.FileFormat.RIEGELI:
+    ds = riegeli_tf.RiegeliDataset(filename, buffer_size=_BUFFER_SIZE)
+  else:
+    raise ValueError(
+        'Invalid `file_format`: %s. Valid formats: %r' %
+        (file_format,
+         [file_format.name for file_format in constants.FileFormat]))
   if do_skip:
     ds = ds.skip(skip)
   if do_take:
@@ -76,6 +91,7 @@ def make_file_instructions(
     name: str,
     split_infos: Iterable[SplitInfo],
     instruction: Union['ReadInstruction', str],
+    file_format: constants.FileFormat = constants.DEFAULT_FILE_FORMAT,
 ) -> List[shard_utils.FileInstruction]:
   """Returns instructions of the split dict.
 
@@ -83,6 +99,8 @@ def make_file_instructions(
     name: Name of the dataset.
     split_infos: Dataset splits information
     instruction: `ReadInstruction` or `str`
+    file_format: Format of the record files in which the dataset
+      will be read/written from.
 
   Returns:
     file_intructions: FileInstructions instance
@@ -102,6 +120,7 @@ def make_file_instructions(
       name=name,
       name2shard_lengths=name2shard_lengths,
       absolute_instructions=absolute_instructions,
+      file_format=file_format,
   )
 
 
@@ -109,6 +128,7 @@ def _make_file_instructions_from_absolutes(
     name: str,
     name2shard_lengths: Dict[str, List[int]],
     absolute_instructions: 'ReadInstruction',
+    file_format: constants.FileFormat = constants.DEFAULT_FILE_FORMAT,
 ) -> List[shard_utils.FileInstruction]:
   """Returns the files instructions from the absolute instructions list."""
   # For each split, return the files instruction (skip/take)
@@ -123,7 +143,7 @@ def _make_file_instructions_from_absolutes(
         dataset_name=name,
         split=abs_instr.splitname,
         num_shards=len(shard_lengths),
-        filetype_suffix='tfrecord')
+        filetype_suffix=constants.FILE_FORMAT_TO_FILE_SUFFIX.get(file_format))
     from_ = 0 if abs_instr.from_ is None else abs_instr.from_
     to = sum(shard_lengths) if abs_instr.to is None else abs_instr.to
     single_file_instructions = shard_utils.get_file_instructions(
@@ -137,6 +157,7 @@ def _read_files(
     parse_fn: ParseFn,
     read_config: read_config_lib.ReadConfig,
     shuffle_files: bool,
+    file_format: constants.FileFormat,
 ) -> tf.data.Dataset:
   """Returns tf.data.Dataset for given file instructions.
 
@@ -147,6 +168,8 @@ def _read_files(
     read_config: Additional options to configure the
       input pipeline (e.g. seed, num parallel reads,...).
     shuffle_files: Defaults to False. True to shuffle input files.
+    file_format: Format of the record files in which the dataset
+      will be read/written from.
 
   Returns:
     The dataset object.
@@ -201,8 +224,11 @@ def _read_files(
     )
 
   ds = instruction_ds.interleave(
-      functools.partial(_get_dataset_from_filename,
-                        do_skip=do_skip, do_take=do_take),
+      functools.partial(
+          _get_dataset_from_filename,
+          do_skip=do_skip,
+          do_take=do_take,
+          file_format=file_format),
       cycle_length=cycle_length,
       block_length=block_length,
       num_parallel_calls=tf.data.experimental.AUTOTUNE,
@@ -233,15 +259,21 @@ class Reader(object):
   This class should not typically be exposed to the TFDS user.
   """
 
-  def __init__(self, path, example_specs):
+  def __init__(self,
+               path,
+               example_specs,
+               file_format=constants.DEFAULT_FILE_FORMAT):
     """Initializes Reader.
 
     Args:
       path (str): path where tfrecords are stored.
       example_specs: spec to build ExampleParser.
+      file_format: constants.FileFormat, format of the record files in
+        which the dataset will be read/written from.
     """
     self._path = path
     self._parser = example_parser.ExampleParser(example_specs)
+    self._file_format = file_format
 
   def read(
       self,
@@ -268,7 +300,8 @@ class Reader(object):
        corresponding to given instructions param shape.
     """
     def _read_instruction_to_ds(instruction):
-      file_instructions = make_file_instructions(name, split_infos, instruction)
+      file_instructions = make_file_instructions(
+          name, split_infos, instruction, file_format=self._file_format)
       return self.read_files(
           file_instructions,
           read_config=read_config,
@@ -310,6 +343,7 @@ class Reader(object):
         read_config=read_config,
         parse_fn=self._parser.parse_example,
         shuffle_files=shuffle_files,
+        file_format=self._file_format,
     )
     return ds
 

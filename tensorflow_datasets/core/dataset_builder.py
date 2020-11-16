@@ -902,13 +902,48 @@ class FileReaderBuilder(DatasetBuilder):
 
   """
 
+  def __init__(
+      self,
+      *,
+      data_dir: Optional[utils.PathLike] = None,
+      config: Union[None, str, BuilderConfig] = None,
+      version: Union[None, str, utils.Version] = None,
+      file_format: Union[None, str,
+                         constants.FileFormat] = constants.DEFAULT_FILE_FORMAT):
+    """Constructs a DatasetBuilder.
+
+    Callers must pass arguments as keyword arguments.
+
+    Args:
+      data_dir: directory to read/write data. Defaults to the value of the
+        environment variable TFDS_DATA_DIR, if set, otherwise falls back to
+        "~/tensorflow_datasets".
+      config: `tfds.core.BuilderConfig` or `str` name, optional configuration
+        for the dataset that affects the data generated on disk. Different
+        `builder_config`s will have their own subdirectories and versions.
+      version: Optional version at which to load the dataset. An error is
+        raised if specified version cannot be satisfied. Eg: '1.2.3', '1.2.*'.
+          The special value "experimental_latest" will use the highest version,
+          even if not default. This is not recommended unless you know what you
+          are doing, as the version could be broken.
+      file_format: EXPERIMENTAL, may change at any time; Format of the record
+        files in which dataset will be read/written to. Defaults to `tfrecord`.
+    """
+    super().__init__(data_dir=data_dir, config=config, version=version)
+    try:
+      self._file_format = constants.FileFormat(file_format)
+    except ValueError:
+      raise ValueError("%s is not a valid format. Valid file formats: %r" %
+                       (file_format, [f.value for f in constants.FileFormat]))
+
   @utils.memoized_property
   def _example_specs(self):
     return self.info.features.get_serialized_info()
 
   @property
   def _tfrecords_reader(self):
-    return tfrecords_reader.Reader(self._data_dir, self._example_specs)
+    return tfrecords_reader.Reader(self._data_dir, self._example_specs,
+                                   self._file_format)
 
   def _as_dataset(
       self,
@@ -1079,6 +1114,7 @@ class GeneratorBasedBuilder(FileReaderBuilder):
         max_examples_per_split=download_config.max_examples_per_split,
         beam_options=download_config.beam_options,
         beam_runner=download_config.beam_runner,
+        file_format=self._file_format,
     )
     # Wrap the generation inside a context manager.
     # If `beam` is used during generation (when a pipeline gets created),
@@ -1113,14 +1149,15 @@ class GeneratorBasedBuilder(FileReaderBuilder):
       _check_split_names(split_generators.keys())
 
       # Start generating data for all splits
+      path_suffix = constants.FILE_FORMAT_TO_FILE_SUFFIX.get(self._file_format)
+
       split_info_futures = [
           split_builder.submit_split_generation(  # pylint: disable=g-complex-comprehension
               split_name=split_name,
               generator=generator,
-              path=self.data_path / f"{self.name}-{split_name}.tfrecord",
-          )
-          for split_name, generator
-          in utils.tqdm(split_generators.items(), unit=" splits", leave=False)
+              path=self.data_path / f"{self.name}-{split_name}.{path_suffix}",
+          ) for split_name, generator in utils.tqdm(
+              split_generators.items(), unit=" splits", leave=False)
       ]
     # Finalize the splits (after apache beam completed, if it was used)
     split_infos = [future.result() for future in split_info_futures]

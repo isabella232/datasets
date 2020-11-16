@@ -17,6 +17,7 @@
 
 # IMPORTANT: when changing values here, update docstrings.
 
+import enum
 import os
 from typing import List, Optional
 
@@ -36,6 +37,18 @@ INCOMPLETE_SUFFIX = '.incomplete'
 
 # Note: GCS constants are defined in `core/utils/gcs_utils.py`
 
+
+# File formats.
+class FileFormat(enum.Enum):
+  TFRECORD = 'tfrecord'
+  RIEGELI = 'riegeli'
+
+
+DEFAULT_FILE_FORMAT = FileFormat.TFRECORD
+FILE_FORMAT_TO_FILE_SUFFIX = {
+    FileFormat.TFRECORD: 'tfrecord',
+    FileFormat.RIEGELI: 'riegeli'
+}
 
 _registered_data_dir = set()
 

@@ -546,11 +546,20 @@ def list_info_files(dir_path: str) -> List[str]:
   """Returns name of info files within dir_path."""
   # TODO(tfds): Is there a better filtering scheme which would be more
   # resistant to future modifications (ex: tfrecord => other format)
-  return [
-      fname for fname in tf.io.gfile.listdir(dir_path)
-      if '.tfrecord' not in fname and
-      not tf.io.gfile.isdir(os.path.join(dir_path, fname))
-  ]
+
+  def _is_info_file(fname):
+    # Should not be a record file i.e .tfrecord or .riegeli file and should not
+    # be a directory
+    return all([
+        f'.{format_suffix}' not in fname
+        for format_suffix in constants.FILE_FORMAT_TO_FILE_SUFFIX.values()
+    ]) and not tf.io.gfile.isdir(os.path.join(dir_path, fname))
+
+  info_file_paths = []
+  for fname in tf.io.gfile.listdir(dir_path):
+    if _is_info_file(fname):
+      info_file_paths.append(fname)
+  return info_file_paths
 
 
 def get_base64(write_fn: Callable[[io.BytesIO], None]) -> str:
