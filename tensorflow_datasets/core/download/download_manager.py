@@ -376,7 +376,7 @@ class DownloadManager(object):
 
     # Write `.INFO` file and rename `tmp_dir/file.xyz` -> `url_path`
     resource_lib.write_info_file(
-        resource=resource,
+        url=resource.url,
         path=url_path,
         dataset_name=self._dataset_name,
         original_fname=original_fname,
@@ -564,12 +564,12 @@ class DownloadManager(object):
     download_dir_path.mkdir()
 
     logging.info('Downloading %s into %s...', url, download_dir_path)
-    def callback(url_info):
+    def callback(dl_result):
       return self._handle_download_result(
           resource=resource,
           tmp_dir_path=download_dir_path,
           url_path=url_path,
-          url_info=url_info,
+          url_info=dl_result.url_info,
       )
     return self._downloader.download(
         url, download_dir_path, verify=self._verify_ssl).then(callback)
